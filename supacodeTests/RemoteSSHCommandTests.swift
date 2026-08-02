@@ -246,12 +246,89 @@ struct SSHCommandTests {
   private static let commandLinePrefix =
     "/usr/bin/ssh " + controlOptionTokens.joined(separator: " ") + " -o ConnectTimeout=30 -tt devbox "
 
+  @Test func terminalCompatibilityFallsBackOnlyWhenGhosttyTerminfoIsMissing() async throws {
+    // `term: nil` unsets TERM; the `${TERM:-}` guard must leave it untouched
+    // (no spurious `infocmp` fork, no fallback), same for an empty TERM.
+    let scenarios = [
+      (term: "xterm-ghostty", infocmpExit: 0, expected: "xterm-ghostty"),
+      (term: "xterm-ghostty", infocmpExit: 1, expected: "xterm-256color"),
+      (term: "xterm-ghostty", infocmpExit: 127, expected: "xterm-256color"),
+      (term: "screen-256color", infocmpExit: 1, expected: "screen-256color"),
+      (term: "", infocmpExit: 1, expected: ""),
+      (term: nil, infocmpExit: 1, expected: ""),
+    ]
+
+    for scenario in scenarios {
+      let termSetup =
+        scenario.term.map { "TERM=\(SSHCommand.shellQuote($0)); export TERM; " } ?? "unset TERM; "
+      let process = Process()
+      let output = Pipe()
+      process.executableURL = URL(fileURLWithPath: "/bin/sh")
+      process.arguments = [
+        "-c",
+        "infocmp() { return \(scenario.infocmpExit); }; "
+          + termSetup
+          + SSHCommand.terminalCompatibilityPrelude
+          + #"printf '%s' "${TERM:-}""#,
+      ]
+      process.standardOutput = output
+      try await process.runToExit()
+
+      let resolved = String(bytes: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+      #expect(process.terminationStatus == 0)
+      #expect(resolved == scenario.expected)
+    }
+  }
+
+  @Test func terminalCompatibleLoginShellCommandEmbedsFallbackPreludeAheadOfCommand() {
+    // Verified independently of the builder helpers: if the wrapper ever
+    // stopped injecting the prelude (silently no-op'ing the fix), these
+    // literals break, whereas the self-referential `commandLine` assertions
+    // below would not.
+    let wrapped = SSHCommand.terminalCompatibleLoginShellCommand("exec \"$SHELL\" -l")
+    #expect(wrapped.hasPrefix("exec /bin/sh -c "))
+    #expect(wrapped.contains(#"[ "${TERM:-}" = xterm-ghostty ]"#))
+    #expect(wrapped.contains("export TERM=xterm-256color"))
+    #expect(wrapped.contains("exec \"$SHELL\" -l"))
+  }
+
+  @Test func terminalCompatibleLoginShellCommandIsValidPosixSh() async throws {
+    let command = SSHCommand.terminalCompatibleLoginShellCommand(
+      SSHCommand.loginShellWrapped("echo 'ready'")
+    )
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-n", "-c", command]
+    try await process.runToExit()
+    #expect(process.terminationStatus == 0, "sh -n rejected: \(command)")
+  }
+
+  @Test func terminalCompatibleLoginShellCommandRoundTripsSingleQuotedPayload() async throws {
+    // The extra `shellQuote` layer must preserve a single-quote-bearing payload
+    // through the local `/bin/sh -c` that runs the wrapped command.
+    let wrapped = SSHCommand.terminalCompatibleLoginShellCommand(#"printf '%s' "it's here""#)
+    let process = Process()
+    let output = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-c", wrapped]
+    process.standardOutput = output
+    try await process.runToExit()
+
+    let resolved = String(bytes: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    #expect(process.terminationStatus == 0)
+    #expect(resolved == "it's here")
+  }
+
   @Test func commandLineWrapsRemoteCommandInLoginShellQuotedForLocalShell() {
     let line = SSHCommand.commandLine(
       host: RemoteHost(alias: "devbox"),
       remoteCommand: "zmx attach supa-x"
     )
-    let expectedTail = SSHCommand.shellQuote(SSHCommand.loginShellWrapped("zmx attach supa-x"))
+    let expectedTail = SSHCommand.shellQuote(
+      SSHCommand.terminalCompatibleLoginShellCommand(
+        SSHCommand.loginShellWrapped("zmx attach supa-x")
+      )
+    )
     #expect(line == Self.commandLinePrefix + expectedTail)
   }
 
@@ -264,7 +341,9 @@ struct SSHCommandTests {
       positionalArguments: ["claude", "it's a test"]
     )
     let expectedTail = SSHCommand.shellQuote(
-      SSHCommand.loginShellWrapped("$0 \"$@\"", positionalArguments: ["claude", "it's a test"])
+      SSHCommand.terminalCompatibleLoginShellCommand(
+        SSHCommand.loginShellWrapped("$0 \"$@\"", positionalArguments: ["claude", "it's a test"])
+      )
     )
     #expect(line == Self.commandLinePrefix + expectedTail)
   }
