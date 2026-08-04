@@ -307,6 +307,7 @@ struct AppFeature {
     case requestQuit
     case requestTerminateAllTerminalSessions
     case newTerminal
+    case renameSelectedTerminalTab
     case selectTerminalTabAtIndex(Int)
     case splitTerminal(TerminalSplitMenuDirection)
     case jumpToLatestUnread
@@ -874,6 +875,17 @@ struct AppFeature {
           state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
         return .run { _ in
           await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: shouldRunSetupScript))
+        }
+
+      case .renameSelectedTerminalTab:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing,
+          let tabID = terminalClient.selectedTabID(worktree.id)
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.beginTabRename(worktree, tabID: tabID))
         }
 
       case .selectTerminalTabAtIndex(let tabNumber):
@@ -1467,6 +1479,8 @@ struct AppFeature {
         // Ghostty void actions emit bare tag names; no colon.
         let command: TerminalClient.Command
         if action == "prompt_surface_title" || action == "prompt_tab_title" {
+          // Skip missing worktrees so the palette matches the rename shortcut's guard.
+          guard !worktree.isMissing else { return .none }
           // Capture the focused tab synchronously so a fast tab switch between dispatch
           // and effect execution can't redirect the rename to the wrong tab.
           let tabID = terminalClient.selectedTabID(worktree.id)
