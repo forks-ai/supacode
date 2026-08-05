@@ -412,8 +412,36 @@ struct RemoteDefaultShellCommandTests {
   @Test func escapesSingleQuotesInRemotePath() {
     #expect(
       WorktreeTerminalState.remoteDefaultShellCommand(remotePath: "/home/o'brien/proj")
-        == "cd '/home/o'\\''brien/proj' 2>/dev/null; exec \"$SHELL\" -l"
+        == "cd '/home/o'\"'\"'brien/proj' 2>/dev/null; exec \"$SHELL\" -l"
     )
+  }
+
+  @Test(arguments: LoginShellProbe.quotingContractShells)
+  func changesToRemotePathWithoutChangingBytesUnder(_ shell: String) async throws {
+    try await LoginShellProbe.withTemporaryDirectory("default-shell-\(shell)") { temporaryRoot in
+      let remoteDirectory = temporaryRoot.appending(path: #"working:it's\literal"#)
+      try FileManager.default.createDirectory(at: remoteDirectory, withIntermediateDirectories: true)
+      // A relative `$SHELL` that only resolves from inside the worktree, so a
+      // swallowed `cd` failure cannot pass. It echoes its argv too, pinning the
+      // `-l` that makes the remote shell a login shell.
+      let probe = remoteDirectory.appending(path: "probe-shell")
+      try Data(#"#!/bin/sh\#nprintf '%s %s' "$(pwd -P)" "$1"\#n"#.utf8).write(to: probe)
+      try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: probe.path)
+
+      let command = try #require(
+        WorktreeTerminalState.remoteDefaultShellCommand(remotePath: remoteDirectory.path)
+      )
+      let result = try await LoginShellProbe.run(
+        shell,
+        command: command,
+        configRoot: temporaryRoot.appending(path: "config"),
+        shellPathOverride: "./probe-shell"
+      )
+
+      #expect(result.status == 0, "\(shell) rejected the remote worktree path: \(result.stderr)")
+      #expect(result.stdout == "\(LoginShellProbe.physicalPath(of: remoteDirectory)) -l")
+      #expect(result.shellDiagnostics.isEmpty, "\(shell): \(result.shellDiagnostics)")
+    }
   }
 
   @Test func nilForRootOrEmptyPath() {
