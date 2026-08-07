@@ -6,12 +6,15 @@ on:
 
 jobs:
   review:
-    if: github.event.pull_request.draft == false
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
     permissions:
       actions: read
       contents: read
       issues: write
       pull-requests: write
-    uses: supabitapp/supareview/.github/workflows/supareview-review.yml@main
+    uses: supabitapp/supareview/.github/workflows/supareview-review.yml@79badffe75c017e9f66178e720570277c35a2013
     secrets:
       CODEX_BALANCER_API_KEY: ${{ secrets.CODEX_BALANCER_API_KEY }}
