@@ -108,6 +108,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   /// Beta: hidden terminal tabs release their renderer after a few minutes of
   /// inactivity and reconnect when viewed. On by default.
   public var terminalHibernationEnabled: Bool
+  /// Accessibility size for the app chrome's text. Drives the scale published at
+  /// each window root. Defaults to the unmodified system size.
+  public var chromeTextSize: ChromeTextSize
   /// Gates all background repository polling (remote SSH, PR checks, reconcile).
   /// On by default; disable to stop SSH passphrase prompts or GitHub rate limiting.
   public var automaticRepositoryRefreshEnabled: Bool
@@ -147,7 +150,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     confirmCloseTab: .busy,
     terminateSessionsOnQuit: false,
     remoteSessionPersistenceEnabled: true,
-    appVisibility: .dockAndMenuBar
+    appVisibility: .dockAndMenuBar,
+    chromeTextSize: .default
   )
 
   public init(
@@ -187,6 +191,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     remoteSessionPersistenceEnabled: Bool = true,
     appVisibility: AppVisibility = .dockAndMenuBar,
     terminalHibernationEnabled: Bool = true,
+    chromeTextSize: ChromeTextSize = .default,
     automaticRepositoryRefreshEnabled: Bool = true
   ) {
     self.appearanceMode = appearanceMode
@@ -225,6 +230,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.remoteSessionPersistenceEnabled = remoteSessionPersistenceEnabled
     self.appVisibility = appVisibility
     self.terminalHibernationEnabled = terminalHibernationEnabled
+    self.chromeTextSize = chromeTextSize
     self.automaticRepositoryRefreshEnabled = automaticRepositoryRefreshEnabled
   }
 
@@ -409,6 +415,13 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminalHibernationEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .terminalHibernationEnabled)
       ?? Self.default.terminalHibernationEnabled
+    // Old settings files predate this key; they migrate to the system size. An
+    // unrecognized value falls back the same way rather than throwing, which
+    // would reset the whole file to defaults.
+    chromeTextSize =
+      ((try? container.decodeIfPresent(String.self, forKey: .chromeTextSize)) ?? nil)
+      .flatMap(ChromeTextSize.init(rawValue:))
+      ?? Self.default.chromeTextSize
     // Pre-feature files omit this key; background refresh defaults on.
     automaticRepositoryRefreshEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .automaticRepositoryRefreshEnabled)

@@ -1,3 +1,4 @@
+import SupacodeSettingsShared
 import SwiftUI
 
 struct EmptyTerminalPaneView: View {
@@ -9,15 +10,15 @@ struct EmptyTerminalPaneView: View {
   var body: some View {
     VStack(spacing: 12) {
       Image(systemName: "apple.terminal.on.rectangle")
-        .font(.title)
+        .appFont(.title)
         .imageScale(.large)
         .accessibilityHidden(true)
         .foregroundStyle(.secondary)
       VStack(spacing: 4) {
         Text(message)
-          .font(.title3)
+          .appFont(.title3)
         hint
-          .font(.subheadline)
+          .appFont(.subheadline)
           .foregroundStyle(.secondary)
       }
     }

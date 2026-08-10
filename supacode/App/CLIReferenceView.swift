@@ -1,3 +1,4 @@
+import SupacodeSettingsShared
 import SwiftUI
 
 struct CLIReferenceView: View {
@@ -23,7 +24,7 @@ struct CLIReferenceView: View {
         .foregroundStyle(.secondary)
         // swiftlint:enable line_length
       } header: {
-        Text("CLI Reference").font(.title.bold())
+        Text("CLI Reference").appFont(.title, weight: .bold)
         Text("Control Supacode from the terminal.")
       }
 
@@ -219,7 +220,7 @@ private struct CLISection: View {
         ForEach(rows) { row in
           GridRow {
             Text(row.command)
-              .font(.body.monospaced())
+              .appFont(.body, monospaced: true)
               .gridColumnAlignment(.leading)
             Text(row.description)
               .foregroundStyle(.secondary)

@@ -130,6 +130,59 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.terminalHibernationEnabled == false)
   }
 
+  @Test(.dependencies) func chromeTextSizePersistsChanges() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    await store.send(.binding(.set(\.chromeTextSize, .extraLarge))) {
+      $0.chromeTextSize = .extraLarge
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.chromeTextSize == .extraLarge)
+  }
+
+  @Test(.dependencies) func settingsLoadedAppliesChromeTextSize() async {
+    // The write path is covered above; this covers the read side, that a size
+    // on disk reaches feature state instead of showing Default in the picker.
+    var loaded = GlobalSettings.default
+    loaded.chromeTextSize = .extraLarge
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = loaded }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.settingsLoaded(loaded))
+    #expect(store.state.chromeTextSize == .extraLarge)
+    await store.skipReceivedActions()
+  }
+
+  @Test(.dependencies) func unrelatedSettingsChangeKeepsChromeTextSize() async {
+    // `persist` assigns `$0.global` wholesale, so a field missing from this
+    // feature's state would be written back as its default on every unrelated
+    // change.
+    var initialSettings = GlobalSettings.default
+    initialSettings.chromeTextSize = .large
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.binding(.set(\.terminalHibernationEnabled, false))) {
+      $0.terminalHibernationEnabled = false
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.chromeTextSize == .large)
+  }
+
   @Test(.dependencies) func togglingAutomaticRepositoryRefreshPersistsChanges() async {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global = .default }

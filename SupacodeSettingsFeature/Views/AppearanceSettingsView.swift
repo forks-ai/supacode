@@ -138,6 +138,19 @@ public struct AppearanceSettingsView: View {
           Text("Applies to Worktrees without repository overrides.")
         }
       }
+      Section("Accessibility") {
+        Picker(selection: $store.chromeTextSize) {
+          ForEach(ChromeTextSize.allCases) { size in
+            DefaultTaggedLabel(label: size.label, isDefault: size == .default).tag(size)
+          }
+        } label: {
+          HStack(spacing: 6) {
+            Text("Text size")
+            BetaBadge()
+          }
+          Text("Sizes all non-terminal text. The terminal keeps its own font size.")
+        }
+      }
       Section {
         Toggle(isOn: $store.analyticsEnabled) {
           Text("Share analytics")
@@ -167,8 +180,7 @@ public struct AppearanceSettingsView: View {
 private struct BetaBadge: View {
   var body: some View {
     Text("Beta")
-      .font(.caption2)
-      .fontWeight(.semibold)
+      .appFont(.caption2, weight: .semibold)
       .foregroundStyle(.secondary)
       .padding(.horizontal, 6)
       .padding(.vertical, 2)
