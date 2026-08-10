@@ -4040,7 +4040,7 @@ struct RepositoriesFeatureTests {
     let repoRoot = "/tmp/\(testID)-repo"
     let worktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [worktree])
-    let tabId = TerminalTabID()
+    let tabId = TabID()
     let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
     state.reconcileSidebarForTesting()
@@ -4087,7 +4087,7 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let tabId = TerminalTabID()
+    let tabId = TabID()
     var state = makeState(repositories: [repository])
     state.reconcileSidebarForTesting()
     state.sidebarItems[id: featureWorktree.id]?.lifecycle = .archiving
@@ -4119,7 +4119,7 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let tabId = TerminalTabID()
+    let tabId = TabID()
     var state = makeState(repositories: [repository])
     state.reconcileSidebarForTesting()
     state.sidebarItems[id: featureWorktree.id]?.lifecycle = .deletingScript
@@ -8159,7 +8159,7 @@ struct RepositoriesFeatureTests {
     kind: BlockingScriptKind,
     exitMessage: String,
     worktreeID: Worktree.ID,
-    tabId: TerminalTabID? = nil,
+    tabId: TabID? = nil,
     repoName: String,
     worktreeName: String
   ) -> AlertState<RepositoriesFeature.Alert> {
@@ -8510,6 +8510,10 @@ struct RepositoriesFeatureTests {
       $0.shouldRestoreLastFocusedWorktree = false
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
+      // The restored selection arms its terminal focus synchronously so the
+      // detail view mounts with it set and focus lands in the focused pane on
+      // launch instead of staying on the sidebar.
+      $0.sidebarItems[id: worktreeB.id]?.shouldFocusTerminal = true
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)

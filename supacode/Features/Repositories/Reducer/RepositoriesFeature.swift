@@ -283,7 +283,7 @@ struct RepositoriesFeature {
     var sidebarGrouping: SidebarGrouping = .empty
     /// Long-lived reader hoisted onto State so `reconcileSidebarItems` stays a
     /// pure static mutator and doesn't re-decode the layouts file on every call.
-    @SharedReader(.layouts) var persistedLayouts: [String: TerminalLayoutSnapshot]
+    @SharedReader(.layouts) var persistedLayouts: LayoutsFile
     /// Surfaces seeded onto rows from the persisted layout but not yet broadcast
     /// to agent presence. Accumulates across reconciles; the single drain owner
     /// is `AppFeature.repositoriesChanged`, which intersects against live
@@ -470,11 +470,11 @@ struct RepositoriesFeature {
     case consumeSetupScript(Worktree.ID)
     case consumeTerminalFocus(Worktree.ID)
     case scriptCompleted(
-      worktreeID: Worktree.ID, kind: BlockingScriptKind, exitCode: Int?, tabId: TerminalTabID?)
+      worktreeID: Worktree.ID, kind: BlockingScriptKind, exitCode: Int?, tabId: TabID?)
     case requestArchiveWorktree(Worktree.ID, Repository.ID)
     case requestArchiveWorktrees([ArchiveWorktreeTarget])
     case archiveWorktreeConfirmed(Worktree.ID, Repository.ID, background: Bool = false)
-    case archiveScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TerminalTabID?)
+    case archiveScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TabID?)
     case archiveWorktreeApply(Worktree.ID, Repository.ID)
     case archiveWorktreeCommit(Worktree.ID, Repository.ID)
     case archiveWorktreeApplied(Worktree.ID)
@@ -482,7 +482,7 @@ struct RepositoriesFeature {
     case unarchiveWorktree(Worktree.ID)
     case requestDeleteSidebarItems([DeleteWorktreeTarget])
     case deleteSidebarItemConfirmed(Worktree.ID, Repository.ID, background: Bool = false)
-    case deleteScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TerminalTabID?)
+    case deleteScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TabID?)
     case deleteWorktreeApply(Worktree.ID, Repository.ID)
     case worktreeDeleted(
       Worktree.ID,
@@ -604,7 +604,7 @@ struct RepositoriesFeature {
     case confirmDeleteSidebarItems([DeleteWorktreeTarget], disposition: DeleteDisposition)
     case confirmDeleteRepository(Repository.ID)
     case confirmRemoveFailedRepository(Repository.ID)
-    case viewTerminalTab(Worktree.ID, tabId: TerminalTabID)
+    case viewTerminalTab(Worktree.ID, tabId: TabID)
   }
 
   enum PullRequestAction: Equatable {
@@ -629,7 +629,7 @@ struct RepositoriesFeature {
       Worktree, repositoryID: Repository.ID, kind: BlockingScriptKind, script: String,
       focusing: Bool = true
     )
-    case selectTerminalTab(Worktree.ID, tabId: TerminalTabID)
+    case selectTerminalTab(Worktree.ID, tabId: TabID)
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
@@ -3269,19 +3269,8 @@ struct RepositoriesFeature {
         return .send(.loadPersistedRepositories)
 
       case .sidebarGroupingTogglesChanged:
-        // The post-reduce hook below picks up the toggle state and rebuilds.
-        // Auto-dismiss the highlight onboarding card when both toggles end up
-        // off; the `SidebarCommands` menu setters fire the same dismiss so
-        // toggling while the sidebar column is collapsed is also covered.
-        @Shared(.sidebarGroupPinnedRows) var groupPinned
-        @Shared(.sidebarGroupActiveRows) var groupActive
-        if !groupPinned, !groupActive {
-          @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
-          var dismissedAt: Date = .distantPast
-          if !HighlightRelevantOnboardingCardView.isDismissed(at: dismissedAt) {
-            $dismissedAt.withLock { $0 = now }
-          }
-        }
+        // No-op handler: the post-reduce hook reads the grouping toggles and
+        // rebuilds `sidebarStructure`.
         return .none
 
       case .sidebarNestByBranchChanged:
@@ -5149,6 +5138,13 @@ struct RepositoriesFeature {
       state.shouldRestoreLastFocusedWorktree = false
       if state.selection == nil, state.isSelectionValid(state.sidebar.focusedWorktreeID) {
         state.selection = state.sidebar.focusedWorktreeID.map(SidebarSelection.worktree)
+        // Arm the restored worktree's terminal focus synchronously with the
+        // selection so the detail view mounts with it already set; a follow-up
+        // effect would land after the view's first appearance and be missed,
+        // leaving keyboard focus on the sidebar.
+        if let focusedID = state.sidebar.focusedWorktreeID {
+          state.sidebarItems[id: focusedID]?.shouldFocusTerminal = true
+        }
       }
     }
     if state.selection == nil, state.shouldSelectFirstAfterReload {
@@ -5205,7 +5201,7 @@ struct RepositoriesFeature {
     kind: BlockingScriptKind,
     exitCode: Int,
     worktreeID: Worktree.ID,
-    tabId: TerminalTabID?,
+    tabId: TabID?,
     state: State
   ) -> AlertState<Alert> {
     let worktreeName = state.worktree(for: worktreeID)?.name
