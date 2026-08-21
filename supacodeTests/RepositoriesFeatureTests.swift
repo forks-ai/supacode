@@ -984,6 +984,67 @@ struct RepositoriesFeatureTests {
     }
   }
 
+  @Test func createRandomWorktreePromptUsesCustomizedRepositoryTitle() async {
+    // A repo root no other test uses: the sidebar is process-global shared
+    // storage, and a parallel test rewriting the shared "/tmp/repo" section
+    // would wipe the customized title mid-flight.
+    let repoRoot = "/tmp/custom-titled-repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id, default: .init()].title = "Backend"
+    }
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.remoteNames = { _ in ["origin"] }
+      $0.gitClient.branchInventory = { _, _ in GitBranchInventory() }
+    }
+    // The prompt path parks the request and re-seeds shared state on send, so
+    // only the title is pinned here; the full prompt state is covered by
+    // `createRandomWorktreeInRepositoryWithPromptEnabledPresentsPrompt`.
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.promptedWorktreeCreationDataLoaded)
+
+    // The dialog names the repository by its customized title, like the sidebar.
+    #expect(store.state.worktreeCreationPrompt?.repositoryName == "Backend")
+  }
+
+  /// `repositoryName(for:)` is the shared display-name lookup behind the
+  /// detail header, the palette, the pane window title, and the script /
+  /// trash alerts, so it resolves the customized title like the sidebar does.
+  @Test func repositoryNameResolvesCustomizedTitles() {
+    let gitRoot = "/tmp/named-git-repo"
+    let folderRoot = "/tmp/named-folder-repo"
+    let gitRepository = makeRepository(
+      id: gitRoot,
+      name: "named-git-repo",
+      worktrees: [makeWorktree(id: gitRoot, name: "main", repoRoot: gitRoot)]
+    )
+    let folderID = Repository.folderWorktreeID(for: URL(fileURLWithPath: folderRoot))
+    let folderRepository = Repository(
+      id: RepositoryID(folderRoot),
+      rootURL: URL(fileURLWithPath: folderRoot),
+      name: "named-folder-repo",
+      worktrees: [makeWorktree(id: folderRoot, name: "named-folder-repo", repoRoot: folderRoot)],
+      isGitRepository: false
+    )
+    var state = makeState(repositories: [gitRepository, folderRepository])
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[gitRepository.id, default: .init()].title = "Backend"
+      sidebar.setCustomization(title: "Files", color: nil, worktree: folderID, in: folderRepository.id)
+    }
+
+    #expect(state.repositoryName(for: gitRepository.id) == "Backend")
+    #expect(state.repositoryName(for: folderRepository.id) == "Files")
+    #expect(state.repositoryName(for: "/tmp/not-in-the-roster") == nil)
+  }
+
   @Test func promptedWorktreeBranchesLoadedResetsStalePersistedBaseRef() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)

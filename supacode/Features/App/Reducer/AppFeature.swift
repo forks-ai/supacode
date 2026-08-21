@@ -610,15 +610,10 @@ struct AppFeature {
           .send(
             .settings(
               .repositoriesChanged(
-                repositories.map {
-                  SettingsRepositorySummary(
-                    id: $0.id.rawValue,
-                    name: $0.name,
-                    isGitRepository: $0.isGitRepository,
-                    host: $0.host,
-                    rootURL: $0.rootURL
-                  )
-                }
+                Self.settingsRepositorySummaries(
+                  repositories: repositories,
+                  sidebar: state.repositories.sidebar
+                )
               )
             )
           ),
@@ -666,6 +661,47 @@ struct AppFeature {
           }
         }
         return .merge(effects)
+
+      // A "Customize Appearance" save writes the shared sidebar state without
+      // firing `repositoriesChanged`, so re-send the settings summaries here.
+      // `core` runs before the child reducer applies the save, hence the
+      // explicit title override.
+      case .repositories(
+        .repositoryCustomization(.presented(.delegate(.save(let repositoryID, let title, _))))
+      ):
+        return .send(
+          .settings(
+            .repositoriesChanged(
+              Self.settingsRepositorySummaries(
+                repositories: state.repositories.repositories,
+                sidebar: state.repositories.sidebar,
+                titleOverride: (repositoryID, title)
+              )
+            )
+          )
+        )
+
+      // Folder (non-git) repos are renamed through the worktree-appearance
+      // path: their title lives on the synthetic folder-worktree item. Same
+      // re-send as above, gated to folders so git worktree renames (never
+      // shown in settings) stay cheap.
+      case .repositories(
+        .worktreeCustomization(.presented(.delegate(.save(_, let repositoryID, let title, _))))
+      ),
+        .repositories(.setWorktreeAppearance(_, let repositoryID, let title, _)):
+        guard state.repositories.repositories[id: repositoryID]?.isGitRepository == false
+        else { return .none }
+        return .send(
+          .settings(
+            .repositoriesChanged(
+              Self.settingsRepositorySummaries(
+                repositories: state.repositories.repositories,
+                sidebar: state.repositories.sidebar,
+                titleOverride: (repositoryID, title)
+              )
+            )
+          )
+        )
 
       case .repositories(.delegate(.openWorktreeInApp(let worktreeID, let action))):
         guard let worktree = state.repositories.worktree(for: worktreeID) else {
@@ -2108,6 +2144,29 @@ struct AppFeature {
     )
   }
 
+  /// Settings sidebar names resolve like the main sidebar's: a "Customize
+  /// Appearance" title overrides the repository's directory name, otherwise
+  /// identically-named directories are indistinguishable in settings.
+  private static func settingsRepositorySummaries(
+    repositories: IdentifiedArrayOf<Repository>,
+    sidebar: SidebarState,
+    titleOverride: (repositoryID: Repository.ID, title: String?)? = nil
+  ) -> [SettingsRepositorySummary] {
+    repositories.map { repository in
+      let customTitle =
+        repository.id == titleOverride?.repositoryID
+        ? titleOverride?.title
+        : sidebar.customTitle(for: repository)
+      return SettingsRepositorySummary(
+        id: repository.id.rawValue,
+        name: Repository.sidebarDisplayName(custom: customTitle, fallback: repository.name),
+        isGitRepository: repository.isGitRepository,
+        host: repository.host,
+        rootURL: repository.rootURL
+      )
+    }
+  }
+
   /// Re-sweeps LaunchServices off the main thread, debounced so a launch that is
   /// immediately followed by an activation resolves once. Emits nothing when the
   /// installed set is unchanged, which is the common case.
@@ -3263,7 +3322,7 @@ struct AppFeature {
         && state.repositories.alert == nil
         && (state.repositories.sidebarItems[id: worktreeID]?.lifecycle ?? .idle) == .idle
       guard folderEligible else {
-        let folderName = state.repositories.repositories[id: repositoryID]?.name ?? "This folder"
+        let folderName = state.repositories.repositoryName(for: repositoryID) ?? "This folder"
         state.alert = AlertState {
           TextState("Delete unavailable")
         } actions: {
@@ -3680,7 +3739,13 @@ struct AppFeature {
   ) -> Effect<Action> {
     let worktreeName = state.repositories.worktree(for: worktreeID)?.name ?? "Unknown"
     let repoName = state.repositories.repositoryID(containing: worktreeID)
-      .flatMap { state.repositories.repositories[id: $0]?.name }
+      .flatMap { state.repositories.repositories[id: $0] }
+      .map { repository in
+        Repository.sidebarDisplayName(
+          custom: state.repositories.sidebar.customTitle(for: repository),
+          fallback: repository.name
+        )
+      }
     // Close any previously pending FD so the CLI does not hang.
     let supersededEffect: Effect<Action> =
       state.deeplinkInputConfirmation?.responseFD.map {
