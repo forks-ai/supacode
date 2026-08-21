@@ -43,12 +43,10 @@ struct WorktreeDetailView: View {
       selectedWorktree: selectedWorktree,
       selectedWorktreeSummaries: selectedWorktreeSummaries
     )
-    let hasActiveWorktree =
-      selectedWorktree != nil
-      && loadingInfo == nil
-      && !shouldShowMultiSelectionSummary(
-        repositories: repositories, selectedWorktreeSummaries: selectedWorktreeSummaries)
-      && selectedWorktree?.isMissing != true
+    let hasActiveWorktree = hasActiveWorktree(
+      repositories: repositories, loadingInfo: loadingInfo,
+      selectedWorktree: selectedWorktree, selectedWorktreeSummaries: selectedWorktreeSummaries
+    )
     // `toolbarNotificationGroupsCache` is observed inside `ToolbarNotificationsButtonHost`
     // instead; reading it here would re-render the body on every notification.
     let repositoriesStore = store.scope(state: \.repositories, action: \.repositories)
@@ -63,6 +61,8 @@ struct WorktreeDetailView: View {
       selectedRow: selectedRow,
       repositories: repositories
     )
+    let inspectorCapabilities = Self.inspectorCapabilities(
+      repositories: repositories, selectedWorktree: selectedWorktree)
     // Read the manager's stored color here (tracked body evaluation, not the
     // deferred toolbar closure) so the toolbar scheme invalidates on change.
     let toolbarScheme: ColorScheme =
@@ -117,6 +117,7 @@ struct WorktreeDetailView: View {
         isCheckingPullRequest: isCheckingPullRequest,
         pullRequest: inspectorPullRequest,
         repositoriesStore: repositoriesStore,
+        capabilities: inspectorCapabilities,
         terminalManager: terminalManager,
         fileOpenActions: state.installedOpenActions.filter(\.canOpenFiles),
         resolvedOpenAction: resolvedSelection,
@@ -144,13 +145,25 @@ struct WorktreeDetailView: View {
   private static func inspectorPullRequest(
     selectedWorktree: Worktree?,
     selectedRow: SelectedWorktreeSlice?
-  ) -> GithubPullRequest? {
+  ) -> ForgePullRequest? {
     selectedWorktree.flatMap { worktree in
       if case .git(let pullRequest) = toolbarKind(for: worktree, selectedRow: selectedRow) {
         return pullRequest
       }
       return nil
     }
+  }
+
+  /// Capabilities of the selected repo's resolved forge; GitHub until resolved.
+  private static func inspectorCapabilities(
+    repositories: RepositoriesFeature.State,
+    selectedWorktree: Worktree?
+  ) -> ForgeCapabilities {
+    guard
+      let selectedWorktree,
+      let repositoryID = repositories.repositoryID(containing: selectedWorktree.id)
+    else { return .github }
+    return repositories.forgeCapabilities(for: repositoryID)
   }
 
   /// Whether a pull-request refresh is in flight for the selected worktree's repo.
@@ -237,6 +250,19 @@ struct WorktreeDetailView: View {
       return false
     }
     return !repositories.isInitialLoadComplete
+  }
+
+  private func hasActiveWorktree(
+    repositories: RepositoriesFeature.State,
+    loadingInfo: WorktreeLoadingInfo?,
+    selectedWorktree: Worktree?,
+    selectedWorktreeSummaries: [MultiSelectedWorktreeSummary]
+  ) -> Bool {
+    selectedWorktree != nil
+      && loadingInfo == nil
+      && !shouldShowMultiSelectionSummary(
+        repositories: repositories, selectedWorktreeSummaries: selectedWorktreeSummaries)
+      && selectedWorktree?.isMissing != true
   }
 
   @ViewBuilder
@@ -482,7 +508,7 @@ struct WorktreeDetailView: View {
     // Folders have no git remote, so the PR payload is scoped to
     // `.git` — this makes "folder with a pull request" unrepresentable.
     enum Kind {
-      case git(pullRequest: GithubPullRequest?)
+      case git(pullRequest: ForgePullRequest?)
       case folder
     }
 
@@ -520,7 +546,7 @@ struct WorktreeDetailView: View {
       return action.remoteOpenDisabledReason(host: remoteOpenHost, remotePath: remoteOpenPath)
     }
 
-    var pullRequest: GithubPullRequest? {
+    var pullRequest: ForgePullRequest? {
       if case .git(let pullRequest) = kind { pullRequest } else { nil }
     }
 
@@ -796,7 +822,7 @@ struct WorktreeDetailView: View {
 
   /// Trailing git + notifications status toggles, always real controls (never skeletons).
   fileprivate struct TrailingStatusToolbarContent: ToolbarContent {
-    let pullRequest: GithubPullRequest?
+    let pullRequest: ForgePullRequest?
     let repositoriesStore: StoreOf<RepositoriesFeature>?
     let terminalManager: WorktreeTerminalManager
     let inspectorPane: WorktreeInspectorPane
